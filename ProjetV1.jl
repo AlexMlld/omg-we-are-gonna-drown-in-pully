@@ -6,18 +6,17 @@ begin
     Core.eval(Main, :(using MLJ))
 end
 
-weather = CSV.read(joinpath(@__DIR__, "..", "data", "C:\\Users\\Alex\\Downloads\\trainingdata.csv"),DataFrame)
-result = CSV.read(joinpath(@__DIR__, "..", "data", "C:\\Users\\Alex\\Downloads\\sample_submission.csv"),DataFrame)
-weather_test=CSV.read(joinpath(@__DIR__, "..", "data", "C:\\Users\\Alex\\Downloads\\testdata.csv"),DataFrame)
-dropmissing(weather_test)
+weather = CSV.read(joinpath(@__DIR__, "Data", "trainingdata.csv"),DataFrame)
+result = CSV.read(joinpath(@__DIR__, "Data", "sample_submission.csv"),DataFrame)
+weather_test=CSV.read(joinpath(@__DIR__, "Data", "testdata.csv"),DataFrame)
 
 weather_INPUT = dropmissing(weather_test)
-weather_OUTPUT = result
+weather_OUTPUT = result[!,2]
 weather_test_INPUT = dropmissing(weather)
 weather_test_OUTPUT = 0
 
 Random.seed!(31)
-nn = NeuralNetworkRegressor(builder = MLJFlux.Short(n_hidden = 128,
+nn = NeuralNetworkRegressor(builder = MLJFlux.Short(n_hidden =128 ,
                                                     dropout = .5,
                                                     σ = relu),
                             optimiser = ADAMW(),
@@ -25,10 +24,7 @@ nn = NeuralNetworkRegressor(builder = MLJFlux.Short(n_hidden = 128,
                             epochs = 150)
 mach = machine(@pipeline(Standardizer(), nn),
                weather_INPUT, weather_OUTPUT)
-fit!(mach, verbosity = 2)
+fit!(mach, verbosity = 2) #Renvoie un NaN 
+training_error = rmse(predict(mach, weather_INPUT), weather_OUTPUT)
 
-training_error = rmse(predict(mach, weather_INPUT), weather_OUTPUT[!,2])
-weather_test_OUTPUT= predict(mach, weather_test_INPUT)
-
-CSV.write("Prediction.csv",weather_test_OUTPUT)
 
