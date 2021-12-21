@@ -1,12 +1,16 @@
 begin
     using Pkg
 	Pkg.activate(joinpath(Pkg.devdir(), "MLCourse"))
-    
     using MLCourse, Plots, MLJ, DataFrames, Random, CSV, Flux, Distributions,
-          StatsPlots, MLJFlux, OpenML,ScikitLearnBase
+          StatsPlots, MLJFlux, OpenML
     using Flux: onehot, onehotbatch, logitcrossentropy, reset!, throttle
+    using XGBoost
+    using ScikitLearn
+    using ScikitLearn.GridSearch: GridSearchCV
     Core.eval(Main, :(using MLJ))
+    using ScikitLearn.CrossValidation: cross_val_score
     using OpenML, MLJ, MLJXGBoostInterface, DataFrames, MLJLinearModels, MLJDecisionTreeInterface
+    
 end
 
 begin
@@ -20,9 +24,30 @@ begin
 end
 
 
+##Test fonctionnement ScikitLearn et GridSearchCV
+begin
+    nfold = 5
+    num_round = 2
+    param = ["max_depth" => 2,
+             "eta" => 1e-2,
+             "objective" => "binary:logistic"]
+    metrics = ["auc"]
+    nfold_cv(select(weather_INPUT, Not(:precipitation_nextday)), num_round, nfold, label=weather_INPUT.precipitation_nextday, param = param, metrics = metrics = ["error"], seed = 0)
+end
+
+cross_val_score(LogisticRegression(max_iter=130), select(weather_INPUT, Not(:precipitation_nextday)) , weather_INPUT.precipitation_nextday; cv=5)
+
+xgb = XGBoostRegressor()
+xgb_params = [learning_rate=[0.1,0.01,0.5],
+             max_depth=[2,3,4,5],
+             n_estimators=[100,500,1000],
+             colsample_bytree=[0.4,0.7,1]]
+xgb_cv_model = GridSearchCV(xgb,xgb_params,cv =10,n_jobs = -1,verbose =2).fit(select(weather_INPUT, Not(:precipitation_nextday)),weather_INPUT.precipitation_nextday)
+
+##
 
 begin
-	xgb = XGBoostRegressor()
+	
     m2 = machine(TunedModel(model = xgb,
                             resampling = CV(nfolds = 6),
                             tuning = Grid(goal = 25),
@@ -69,13 +94,32 @@ begin
     rmse_NNR=rmse(pred_NNR, weather_INPUT.precipitation_nextday)
 end
 
+begin
+    XGBRegressor(base_score=0.5, booster="gbtree", colsample_bylevel=1,
+                 colsample_bynode=1, colsample_bytree=1, gamma=0,
+                 importance_type="gain", learning_rate=0.1, max_delta_step=0,
+                 max_depth=3, min_child_weight=1, missing=None, n_estimators=100,
+                 n_jobs=1, nthread=None, objective="reg:linear", random_state=0,
+                 reg_alpha=0, reg_lambda=1, scale_pos_weight=1, seed=None,
+                 silent=None, subsample=1, verbosity=1)
+
+    xgb_params = ["learning_rate":[0.1,0.01,0.5],
+             "max_depth":[2,3,4,5],
+             "n_estimators":[100,500,1000],
+             "colsample_bytree":[0.4,0.7,1]]
+
+    xgb_cv_model = GridSearchCV(xgb,xgb_params,cv =10,n_jobs = -1,verbose =2).fit(X_train,y_train) #Trouvez comment ajouter GridSearchCV
+    xgb_cv_model.best_params_
+end
+
+
+
 #=
 xgb_tuned = XGBRegressor(colsample_bytree =0.7 ,
                          learning_rate = 0.5,
                          max_depth = 2,
                          n_estimators = 100,
                          ).fit(X_train, y_train)
-
 
 
 
