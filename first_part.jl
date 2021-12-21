@@ -47,7 +47,7 @@ begin
 end
 
 #PolynomialRegressor (Doesn't work for some reason)
-begin
+#= begin
     model3 = MLCourse.PolynomialRegressor()
     self_tuning_poly = TunedModel(model = model3,
                                    resampling = CV(nfolds =10),
@@ -58,7 +58,7 @@ begin
     self_tuning_poly_mach = machine(self_tuning_poly,
                                select(training1, Not(:precipitation_nextday)),
                                training1.precipitation_nextday) |> fit!
-end
+end =#
 
 #LinearRegressor
 begin
