@@ -13,6 +13,10 @@ end
 begin
     #Drops the Missing Data
     training1=dropmissing(training)
+    training1_multi=coerce(copy(training1),:precipitation_nextday=>Multiclass)
+    standardized_machine = fit!(machine(Standardizer(), training1));
+    standardized_training1= MLJ.transform(standardized_machine, training1)
+    all(isnan.(Array(standardized_training1)))
 end
 
 
@@ -31,23 +35,41 @@ end
 
 
 
+
 #RidgeRegressor: ATTENTION: MAY NOT BE THE SAME PARAMETERS FROM SUBMISSION 2
 begin
     model2 = RidgeRegressor()
     self_tuning_ridge = TunedModel(model = model2,
 	                         resampling = CV(nfolds = 10),
-	                         tuning = Grid(goal = 200),
+	                         tuning = Grid(),
 	                         range = range(model2, :lambda,
 									       scale = :log,
-									       lower = 1e-8, upper = 1e-6),
+									       lower = 1e-5, upper = 1e+11),
 	                         measure = rmse)
     
     self_tuning_ridge_mach = machine(self_tuning_ridge,
                                select(training1, Not(:precipitation_nextday)),
                                training1.precipitation_nextday) |> fit!
+
+
+    report(self_tuning_ridge_mach)
+    #rmse(predict(self_tuning_ridge_mach,select(training1, Not(:precipitation_nextday))),training1.precipitation_nextday)
 end
 
 
+begin
+    model = KNNClassifier()
+    self_tuning_model = TunedModel(model = model,
+                                   resampling = CV(nfolds = 5),
+                                   tuning = Grid(),
+                                   range = range(model, :K, values = 1:50),
+                                   measure = auc)
+    self_tuning_mach = machine(self_tuning_model,
+                               select(training1_multi, Not(:precipitation_nextday)),
+                               training1_multi.precipitation_nextday) |> fit!
+end
+
+auc(predict(self_tuning_mach,select(training1_multi,Not(:precipitation_nextday))),training1_multi.precipitation_nextday)
 
 #LinearRegressor:
 begin
@@ -81,6 +103,52 @@ begin
                 
 end
 
+
+begin
+    log=LogisticClassifier(penalty=:l2)
+    self_tuning_log = TunedModel(model = log,
+	                         resampling = CV(nfolds = 10),
+	                         tuning = Grid(),
+	                         range = range(log, :lambda,
+									       scale = :log,
+									       lower = 1e-5, upper = 1e+11),
+	                         measure = auc)
+    log_mach=fit!(machine(self_tuning_log,select(training1_multi,Not(:precipitation_nextday)),training1_multi.precipitation_nextday))
+end
+
+auc(predict(log_mach,select(training1_multi,Not(:precipitation_nextday))),training1_multi.precipitation_nextday)
+
+
+#NeuralNetworkClassifier 
+#Note: To use NNRegressor, utilize training1 instead of training1_multi and auc instead of rmse
+begin
+   
+    using MLJFlux
+    neural = NeuralNetworkClassifier(builder = MLJFlux.Short(n_hidden = 128,
+                                                    dropout = 0.1),
+                                                    
+                            optimiser = ADAMW(),
+                            batch_size = 2048,
+                            epochs = 100)
+
+    mach_neural=fit!(machine(neural,select(training1_multi, Not(:precipitation_nextday)),training1_multi.precipitation_nextday),verbosity=2)
+
+end
+
+auc(predict(mach_neural,select(training1_multi,Not(:precipitation_nextday))),training1_multi.precipitation_nextday)
+
+
+
+#Changes the MultiClass output to probabilities -> Use this if working with classifiers
+begin
+    function probability_output_Multiclass(pred_Multiclass)
+        predictions= Vector{Float64}()
+        for i in enumerate(pred_Multiclass)
+            append!(predictions, pdf(pred_Multiclass[i[1]], true))
+        end
+        predictions
+    end
+end
 
 
 #Function that makes sure the value is a probability (between 0 and 1)
@@ -152,6 +220,15 @@ begin
     #Predictions based on test data for XGB    
     prediction4=enemy_of_out_of_bounds(predict(self_tuning_xgb_mach, testing))
     submission4_xgb=DataFrame(id=[i[1] for i in enumerate(prediction4)],precipitation_nextday=prediction4)
+
+    #Predictions based on test data for NeuralNetworkClassifier    
+    prediction5=probability_output_Multiclass(predict(mach_neural, testing))
+    submission5_nnc=DataFrame(id=[i[1] for i in enumerate(prediction5)],precipitation_nextday=prediction5)
+
+     #Predictions based on test data for LogisticClassifier    
+     prediction6=probability_output_Multiclass(predict(log_mach, testing))
+     submission6_log=DataFrame(id=[i[1] for i in enumerate(prediction6)],precipitation_nextday=prediction6)
+    
 end
 
 
