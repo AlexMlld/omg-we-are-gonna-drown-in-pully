@@ -2,7 +2,7 @@
  begin
     #Imports required packages
     using Pkg; Pkg.activate(joinpath(Pkg.devdir(), "MLCourse"))
-    using CSV, DataFrames, MLJ, NearestNeighborModels, MLCourse, Random, Plots,MLJLinearModels, OpenML, Flux
+    using CSV, DataFrames, MLJ, NearestNeighborModels, MLCourse, Random, Plots,MLJLinearModels, OpenML, Flux, MLJFlux
 
     #Imports training, test and a sample submission data
     training = CSV.read(joinpath(@__DIR__, "Data", "trainingdata.csv"),DataFrame)
@@ -26,7 +26,7 @@ begin
     self_tuning_kNN = TunedModel(model = model1,
                                    resampling = CV(nfolds =5),
                                    tuning = Grid(),
-                                   range = range(model1, :K, values = 1:20),
+                                   range = range(model1, :lambda, values = 1e:20),
                                    measure = rmse)
     self_tuning_kNN_mach = machine(self_tuning_kNN,
                                select(training1, Not(:precipitation_nextday)),
@@ -87,21 +87,23 @@ end
 #Tree Based Regressor: Submission 4
 begin
     using MLJXGBoostInterface,MLJDecisionTreeInterface
-    weather_input = MLJ.transform(machine(OneHotEncoder(drop_last = true),
-	                               select(training1, Not(:precipitation_nextday))) |> fit!,
-                                   select(training1, Not(:precipitation_nextday)))
-
+    
 	xgb = XGBoostRegressor()
-    self_tuning_xgb_mach = machine(TunedModel(model = xgb,
-                            resampling = CV(nfolds = 10),
-                            tuning = Grid(goal=25),
+    self_tuning_xgb_model = TunedModel(model = xgb,
+                            resampling = CV(nfolds = 20),
+                            tuning = Grid(goal=50),
                             range = [range(xgb, :eta,
-                                           lower = 1e-2, upper = .1, scale = :log),
+                                           lower = 1e-3, upper = .5, scale = :log),
                                      range(xgb, :num_round, lower = 50, upper = 500),
-                                     range(xgb, :max_depth, lower = 2, upper = 6)]),
-                  weather_input, training1.precipitation_nextday) |> fit!
+                                     range(xgb, :max_depth, lower = 2, upper = 8),
+                                     range(xgb, :lambda, lower = 1e-8, upper = 1)])
                 
+         
+    self_tuning_xgb_mach=fit!(machine(self_tuning_xgb_model,select(standardized_training1,Not(:precipitation_nextday)),standardized_training1.precipitation_nextday),verbosity=2)
+    rmse(predict(self_tuning_xgb_mach,select(standardized_training1,Not(:precipitation_nextday))),standardized_training1.precipitation_nextday)
 end
+
+#rmse(predict(self_tuning_xgb_mach,select(standardized_training1,Not(:precipitation_nextday))),standardized_training1.precipitation_nextday)
 
 
 begin
@@ -138,6 +140,31 @@ end
 auc(predict(mach_neural,select(training1_multi,Not(:precipitation_nextday))),training1_multi.precipitation_nextday)
 
 
+begin
+	model_neural = @pipeline(
+                       NeuralNetworkClassifier(
+                             builder = MLJFlux.Short(n_hidden = 32,
+                                                     σ = NNlib.σ),
+                             optimiser = ADAM(),
+                             finaliser = NNlib.softmax,
+                             batch_size = 128),
+                             )
+                             
+	tuned_model2 = TunedModel(model = model_neural,
+							  resampling = CV(nfolds = 2),
+	                          range = [range(model_neural,
+						                :(neural_network_classifier.builder.dropout),
+									    values = [0., .1, .2]),
+								       range(model_neural,
+									     :(neural_network_classifier.epochs),
+									     values = [1500,11])],
+	                          measure = auc)
+	mach_neural1 = machine(@pipeline(Standardizer(), tuned_model2),
+    select(training1_multi, Not(:precipitation_nextday)), training1_multi.precipitation_nextday)
+	            
+end
+
+predict(mach2,select(training1_multi,Not(:precipitation_nextday)))
 
 #Changes the MultiClass output to probabilities -> Use this if working with classifiers
 begin
@@ -204,38 +231,38 @@ report(self_tuning_poly_mach)
 begin
 
     #Predictions based on test data for KNNRegressor
-    prediction1=enemy_of_out_of_bounds(predict(self_tuning_kNN_mach, testing))
+    #= prediction1=enemy_of_out_of_bounds(predict(self_tuning_kNN_mach, testing))
     submission1_kNN=DataFrame(id=[i[1] for i in enumerate(prediction1)],precipitation_nextday=prediction1)
 
 
     #Predictions based on test data for Ridge Regressor
     prediction2=enemy_of_out_of_bounds(predict(self_tuning_ridge_mach, testing))
-    submission2_ridge=DataFrame(id=[i[1] for i in enumerate(prediction2)],precipitation_nextday=prediction2)
+    submission2_ridge=DataFrame(id=[i[1] for i in enumerate(prediction2)],precipitation_nextday=prediction2) =#
 
 
-    #Predictions based on test data for Linear Regressor
+   #=  #Predictions based on test data for Linear Regressor
     prediction3=enemy_of_out_of_bounds(predict(linear_mach, testing))
-    submission3_linear=DataFrame(id=[i[1] for i in enumerate(prediction3)],precipitation_nextday=prediction3)
+    submission3_linear=DataFrame(id=[i[1] for i in enumerate(prediction3)],precipitation_nextday=prediction3) =#
 
     #Predictions based on test data for XGB    
     prediction4=enemy_of_out_of_bounds(predict(self_tuning_xgb_mach, testing))
     submission4_xgb=DataFrame(id=[i[1] for i in enumerate(prediction4)],precipitation_nextday=prediction4)
 
-    #Predictions based on test data for NeuralNetworkClassifier    
+   #=  #Predictions based on test data for NeuralNetworkClassifier    
     prediction5=probability_output_Multiclass(predict(mach_neural, testing))
-    submission5_nnc=DataFrame(id=[i[1] for i in enumerate(prediction5)],precipitation_nextday=prediction5)
+    submission5_nnc=DataFrame(id=[i[1] for i in enumerate(prediction5)],precipitation_nextday=prediction5) =#
 
-     #Predictions based on test data for LogisticClassifier    
+     #= #Predictions based on test data for LogisticClassifier    
      prediction6=probability_output_Multiclass(predict(log_mach, testing))
-     submission6_log=DataFrame(id=[i[1] for i in enumerate(prediction6)],precipitation_nextday=prediction6)
+     submission6_log=DataFrame(id=[i[1] for i in enumerate(prediction6)],precipitation_nextday=prediction6) =#
     
 end
 
 
 #Writes Submission Data from the previously constructed test data predictions
 begin
-    CSV.write(joinpath(@__DIR__, "Submission_Data", "submission1_kNN.csv"), submission1_kNN)
+    #= CSV.write(joinpath(@__DIR__, "Submission_Data", "submission1_kNN.csv"), submission1_kNN)
     CSV.write(joinpath(@__DIR__, "Submission_Data", "submission2_ridge.csv"), submission2_ridge)
-    CSV.write(joinpath(@__DIR__, "Submission_Data", "submission3_linear.csv"), submission3_linear)
+    CSV.write(joinpath(@__DIR__, "Submission_Data", "submission3_linear.csv"), submission3_linear) =#
     CSV.write(joinpath(@__DIR__, "Submission_Data", "submission4_xgb.csv"), submission4_xgb)
 end
