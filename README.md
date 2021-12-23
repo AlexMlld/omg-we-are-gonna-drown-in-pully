@@ -1,7 +1,11 @@
 # omg-we-are-gonna-drown-in-pully
-Will it rain in Pully
 
-Je fais un read me juste pour t'expliquer ce que j'ai fait rapidemment. 
-En gros je capte pas grand chose, j'ai commencé vite fait un programme (c'est le même que celui du cours MLP: Neuronal Network Regressor). 
-C'était pour voir un peu si ça marchait et les résultats qu'on obtenait. J'ai pas de résultat j'ai un Loss is NaN dans le fit!  et du coup un NaN en training test. 
-Mis à part ça je pense que c'est qu'il faut utiliser après faut juste adapter les paramètres du network et en rajouter pour être plus précis. 
+This repository contains our work about the kaggle competition "will it rain in Pully" :  
+
+> Project_file contains all the final model for notation.
+> 
+> Test_file is a crashtest file to experiment julia langage and the different parameters of the model. It also contains all saves of the previous submission model.
+> 
+> Data contains all the data files. 
+> 
+> Submission contains all the prediction submitted on kaggle. 
