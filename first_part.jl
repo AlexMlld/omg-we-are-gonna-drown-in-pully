@@ -10,13 +10,16 @@
 end
 
 
+ #Drops the Missing Data
+ #Standardizes teh training and test data
 begin
-    #Drops the Missing Data
+   
     training1=dropmissing(training)
     training1_multi=coerce(copy(training1),:precipitation_nextday=>Multiclass)
-    standardized_machine = fit!(machine(Standardizer(), training1));
-    standardized_training1= MLJ.transform(standardized_machine, training1)
-    all(isnan.(Array(standardized_training1)))
+    standardized_machine_train = fit!(machine(Standardizer(), training1));
+    standardized_training1= MLJ.transform(standardized_machine_train, training1)
+    standardized_machine_test = fit!(machine(Standardizer(), testing));
+    standardized_test1= MLJ.transform(standardized_machine_test, testing)
 end
 
 
@@ -32,7 +35,6 @@ begin
                                select(training1, Not(:precipitation_nextday)),
                                training1.precipitation_nextday) |> fit!
 end
-
 
 
 
@@ -53,10 +55,10 @@ begin
 
 
     report(self_tuning_ridge_mach)
-    #rmse(predict(self_tuning_ridge_mach,select(training1, Not(:precipitation_nextday))),training1.precipitation_nextday)
+    rmse(predict(self_tuning_ridge_mach,select(training1, Not(:precipitation_nextday))),training1.precipitation_nextday)
 end
 
-
+#KNNClassifier
 begin
     model = KNNClassifier()
     self_tuning_model = TunedModel(model = model,
@@ -83,8 +85,7 @@ end
 
 
 
-
-#Tree Based Regressor: Submission 4
+#XGradientBoosting model
 begin
     using MLJXGBoostInterface,MLJDecisionTreeInterface
     
@@ -103,9 +104,27 @@ begin
     rmse(predict(self_tuning_xgb_mach,select(standardized_training1,Not(:precipitation_nextday))),standardized_training1.precipitation_nextday)
 end
 
-#rmse(predict(self_tuning_xgb_mach,select(standardized_training1,Not(:precipitation_nextday))),standardized_training1.precipitation_nextday)
+#report of the XGB model
+begin
+    report(self_tuning_xgb_mach)
+    fitted_params(self_tuning_xgb_mach).best_model
+end
+
+#Hand-Tuning for XGB
+begin
+    using MLJXGBoostInterface,MLJDecisionTreeInterface
+    
+	xgb2 = XGBoostRegressor(eta=0.02236,max_depth=5,lambda=1e1, num_round=1000, min_child_weight=1)
+    #The commented parts are for self_tuning
+    #cv=CV(nfolds=3,shuffle=true)
+    #evaluate(xgb2, select(standardized_training1,Not(:precipitation_nextday)), standardized_training1.precipitation_nextday, resampling=cv, measure=rmse)
+         
+    tuned_xgb_mach2=fit!(machine(xgb2,select(standardized_training1,Not(:precipitation_nextday)),standardized_training1.precipitation_nextday),verbosity=2)
+    rmse(predict(tuned_xgb_mach2,select(standardized_training1,Not(:precipitation_nextday))),standardized_training1.precipitation_nextday)
+end
 
 
+#LogisticClassifier which uses ridge penalty
 begin
     log=LogisticClassifier(penalty=:l2)
     self_tuning_log = TunedModel(model = log,
@@ -116,9 +135,10 @@ begin
 									       lower = 1e-5, upper = 1e+11),
 	                         measure = auc)
     log_mach=fit!(machine(self_tuning_log,select(training1_multi,Not(:precipitation_nextday)),training1_multi.precipitation_nextday))
+    auc(predict(log_mach,select(training1_multi,Not(:precipitation_nextday))),training1_multi.precipitation_nextday)
 end
 
-auc(predict(log_mach,select(training1_multi,Not(:precipitation_nextday))),training1_multi.precipitation_nextday)
+
 
 
 #NeuralNetworkClassifier 
@@ -126,45 +146,32 @@ auc(predict(log_mach,select(training1_multi,Not(:precipitation_nextday))),traini
 begin
    
     using MLJFlux
-    neural = NeuralNetworkClassifier(builder = MLJFlux.Short(n_hidden = 128,
-                                                    dropout = 0.1),
+    neural = NeuralNetworkClassifier(builder = MLJFlux.Short(n_hidden = 4096,
+                                                    dropout = 0.25,σ = NNlib.σ),
                                                     
                             optimiser = ADAMW(),
-                            batch_size = 2048,
-                            epochs = 100)
-
+                            batch_size = 512,
+                            epochs = 1000)
+    #The commented parts are for self_tuning                       
+    #= cv=CV(nfolds=2,shuffle=true)
+    evaluate(neural, select(training1_multi,Not(:precipitation_nextday)), training1_multi.precipitation_nextday, resampling=cv, measure=auc,verbosity=2) =#
     mach_neural=fit!(machine(neural,select(training1_multi, Not(:precipitation_nextday)),training1_multi.precipitation_nextday),verbosity=2)
 
+    auc(predict(mach_neural,select(training1_multi,Not(:precipitation_nextday))),training1_multi.precipitation_nextday)
+
 end
 
-auc(predict(mach_neural,select(training1_multi,Not(:precipitation_nextday))),training1_multi.precipitation_nextday)
-
-
+#RandomForestRegressor
 begin
-	model_neural = @pipeline(
-                       NeuralNetworkClassifier(
-                             builder = MLJFlux.Short(n_hidden = 32,
-                                                     σ = NNlib.σ),
-                             optimiser = ADAM(),
-                             finaliser = NNlib.softmax,
-                             batch_size = 128),
-                             )
-                             
-	tuned_model2 = TunedModel(model = model_neural,
-							  resampling = CV(nfolds = 2),
-	                          range = [range(model_neural,
-						                :(neural_network_classifier.builder.dropout),
-									    values = [0., .1, .2]),
-								       range(model_neural,
-									     :(neural_network_classifier.epochs),
-									     values = [1500,11])],
-	                          measure = auc)
-	mach_neural1 = machine(@pipeline(Standardizer(), tuned_model2),
-    select(training1_multi, Not(:precipitation_nextday)), training1_multi.precipitation_nextday)
-	            
+    mRFR = machine(RandomForestRegressor(n_trees=1000,n_subfeatures=20), weatherX, weatherY);
+    cv=CV(nfolds=2,shuffle=true)
+    evaluate!(mRFR,resampling=cv, measure = rmse)
+
+    pred_RFR= enemy_of_out_of_bounds(predict(mRFR, weatherX))
+    rmse_RFR=rmse(pred_RFR, weatherY)
 end
 
-predict(mach2,select(training1_multi,Not(:precipitation_nextday)))
+
 
 #Changes the MultiClass output to probabilities -> Use this if working with classifiers
 begin
@@ -202,28 +209,19 @@ begin
     #Predicts the dataset with all values between 0 and 1
     pred_kNN= enemy_of_out_of_bounds(predict(self_tuning_kNN_mach, select(training1, Not(:precipitation_nextday))))
     pred_ridge= enemy_of_out_of_bounds(predict(self_tuning_ridge_mach, select(training1, Not(:precipitation_nextday))))
-    pred_poly= enemy_of_out_of_bounds(predict(self_tuning_poly_mach, select(training1, Not(:precipitation_nextday))))
     pred_linear= enemy_of_out_of_bounds(predict(linear_mach, select(training1, Not(:precipitation_nextday))))
     pred_xgb= enemy_of_out_of_bounds(predict(self_tuning_xgb_mach, select(training1, Not(:precipitation_nextday))))
 
     #Calculates the RMSEs
     rmse_kNN=rmse(pred_kNN, training1.precipitation_nextday)
     rmse_ridge=rmse(pred_ridge, training1.precipitation_nextday)
-    rmse_poly=rmse(pred_poly, training1.precipitation_nextday)
     rmse_linear=rmse(pred_linear, training1.precipitation_nextday)
     rmse_pred_xgb=rmse(pred_xgb, training1.precipitation_nextday)
 
     #Creates DataFrame
-    training_errors=DataFrame(Models= ["kNN Regression","Ridge Regression","PolynomialRegression", "LinearRegression", "XGB"],
-                                                                         Training_RMSE=[rmse_kNN,rmse_ridge,rmse_poly,rmse_linear, rmse_pred_xgb])
+    training_errors=DataFrame(Models= ["kNN Regression","Ridge Regression", "LinearRegression", "XGB"],
+                                                                         Training_RMSE=[rmse_kNN,rmse_ridge,rmse_linear, rmse_pred_xgb])
 end
-
-
-#Reports of the Various Models
-report(self_tuning_kNN_mach)
-report(self_tuning_ridge_mach)
-report(self_tuning_poly_mach)
-
 
 
 
@@ -231,38 +229,39 @@ report(self_tuning_poly_mach)
 begin
 
     #Predictions based on test data for KNNRegressor
-    #= prediction1=enemy_of_out_of_bounds(predict(self_tuning_kNN_mach, testing))
+    prediction1=enemy_of_out_of_bounds(predict(self_tuning_kNN_mach, testing))
     submission1_kNN=DataFrame(id=[i[1] for i in enumerate(prediction1)],precipitation_nextday=prediction1)
-
 
     #Predictions based on test data for Ridge Regressor
     prediction2=enemy_of_out_of_bounds(predict(self_tuning_ridge_mach, testing))
-    submission2_ridge=DataFrame(id=[i[1] for i in enumerate(prediction2)],precipitation_nextday=prediction2) =#
+    submission2_ridge=DataFrame(id=[i[1] for i in enumerate(prediction2)],precipitation_nextday=prediction2)
 
-
-   #=  #Predictions based on test data for Linear Regressor
+    #Predictions based on test data for Linear Regressor
     prediction3=enemy_of_out_of_bounds(predict(linear_mach, testing))
-    submission3_linear=DataFrame(id=[i[1] for i in enumerate(prediction3)],precipitation_nextday=prediction3) =#
+    submission3_linear=DataFrame(id=[i[1] for i in enumerate(prediction3)],precipitation_nextday=prediction3)
 
     #Predictions based on test data for XGB    
-    prediction4=enemy_of_out_of_bounds(predict(self_tuning_xgb_mach, testing))
+    prediction4=enemy_of_out_of_bounds(predict(tuned_xgb_mach2, standardized_test1))
     submission4_xgb=DataFrame(id=[i[1] for i in enumerate(prediction4)],precipitation_nextday=prediction4)
 
-   #=  #Predictions based on test data for NeuralNetworkClassifier    
+    #Predictions based on test data for NeuralNetworkClassifier    
     prediction5=probability_output_Multiclass(predict(mach_neural, testing))
-    submission5_nnc=DataFrame(id=[i[1] for i in enumerate(prediction5)],precipitation_nextday=prediction5) =#
+    submission5_nnc=DataFrame(id=[i[1] for i in enumerate(prediction5)],precipitation_nextday=prediction5)
 
-     #= #Predictions based on test data for LogisticClassifier    
-     prediction6=probability_output_Multiclass(predict(log_mach, testing))
-     submission6_log=DataFrame(id=[i[1] for i in enumerate(prediction6)],precipitation_nextday=prediction6) =#
+    #Predictions based on test data for LogisticClassifier    
+    prediction6=probability_output_Multiclass(predict(log_mach, testing))
+    submission6_log=DataFrame(id=[i[1] for i in enumerate(prediction6)],precipitation_nextday=prediction6)
     
 end
 
 
 #Writes Submission Data from the previously constructed test data predictions
+#Added accordingly with respect to submissions
 begin
-    #= CSV.write(joinpath(@__DIR__, "Submission_Data", "submission1_kNN.csv"), submission1_kNN)
+    CSV.write(joinpath(@__DIR__, "Submission_Data", "submission1_kNN.csv"), submission1_kNN)
     CSV.write(joinpath(@__DIR__, "Submission_Data", "submission2_ridge.csv"), submission2_ridge)
-    CSV.write(joinpath(@__DIR__, "Submission_Data", "submission3_linear.csv"), submission3_linear) =#
-    CSV.write(joinpath(@__DIR__, "Submission_Data", "submission4_xgb.csv"), submission4_xgb)
+    CSV.write(joinpath(@__DIR__, "Submission_Data", "submission3_linear.csv"), submission3_linear)
+    CSV.write(joinpath(@__DIR__, "Submission_Data", "submission10_xgb.csv"), submission4_xgb)
+    CSV.write(joinpath(@__DIR__, "Submission_Data", "submission11_neural.csv"), submission5_nnc)
+    
 end
